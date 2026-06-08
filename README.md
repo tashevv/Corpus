@@ -1,6 +1,6 @@
 # Corpus app
 
-English language database and dictionary.\\
+English language database and dictionary.\ \
 Dataset is from https://www.wordfrequency.info/ \
 Dictionary is from https://dictionaryapi.dev/
 
