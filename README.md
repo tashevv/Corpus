@@ -1,6 +1,9 @@
 # Corpus app
 
 English language database and dictionary.
+Dataset is from https://www.wordfrequency.info/
+Dictionary is from https://dictionaryapi.dev/
+
 
 corpus/\
 ├── READ ME.txt\
