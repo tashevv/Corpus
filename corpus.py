@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
 DICTIONARY_PATH = os.path.join("data", "words_list.txt")
 DB_PATH         = os.path.join("data", "dictionary.db")
 FLAGS_PATH      = os.path.join("data", "flagged_ranks.txt")
+NO_DEF_PATH     = os.path.join("data", "not_found.txt")
 
 POS_MAP = {
     "n": "Noun",
@@ -34,7 +35,7 @@ POS_MAP = {
     "x": "Unknown",
 }
 
-POS_NAME_TO_CODE = {v: k for k, v in POS_MAP.items()}  # "Noun" -> "n", etc.
+POS_NAME_TO_CODE = {v: k for k, v in POS_MAP.items()}
 
 COLUMN_SORT_MAP = {
     "Rank":  ("rank",       "num"),
@@ -42,6 +43,7 @@ COLUMN_SORT_MAP = {
     "PoS":   ("pos_name",   "str"),
     "Freq":  ("freq",       "num"),
     "Disp":  ("dispersion", "num"),
+    "Def":   ("has_def",    "num"),
 }
 
 
@@ -49,6 +51,11 @@ class FlagMode(str, Enum):
     ALL       = "all"
     FLAGGED   = "flagged"
     UNFLAGGED = "unflagged"
+
+class DefMode(str, Enum):
+    ALL       = "all"
+    DEFINED   = "defined"
+    UNDEFINED = "undefined"
 
 
 # ── DICTIONARY STORE ──────────────────────────────────────────────────────────
@@ -58,8 +65,8 @@ class DictionaryStore:
     def __init__(self):
         self.entries       = []
         self.flagged_ranks = set()
+        self.no_def_lemmas = set()
 
-    # Loading
     def load_dictionary(self, path):
         if not os.path.exists(path):
             raise FileNotFoundError(f"Dictionary file not found:\n{path}")
@@ -87,7 +94,6 @@ class DictionaryStore:
         self.entries = entries
         return entries
 
-    # Flags
     def load_flags(self, path):
         self.flagged_ranks = set()
         if not os.path.exists(path):
@@ -119,15 +125,12 @@ class DictionaryStore:
         else:
             self.flagged_ranks.add(rank)
 
-    # Filtering
-    def apply_filters(self, *, search_field, search_query, range_field, range_min, range_max, pos_filter, flag_mode,):
+    def apply_filters(self, *, search_field, search_query, range_field, range_min, range_max, pos_filter, flag_mode, def_mode):
         result = self.entries
 
-        # 1. Search
         if search_query:
             result = self._filter_by_search(result, search_field, search_query)
 
-        # 2. Numeric range
         field_map = {"Rank": "rank", "Frequency": "freq", "Dispersion": "dispersion"}
         rf = field_map.get(range_field, "rank")
         if range_min is not None or range_max is not None:
@@ -137,17 +140,27 @@ class DictionaryStore:
                 and (range_max is None or e[rf] <= range_max)
             ]
 
-        # 3. PoS filter
         if pos_filter != "All":
             code = POS_NAME_TO_CODE.get(pos_filter)
             if code:
                 result = [e for e in result if e["pos"].lower() == code]
 
-        # 4. Flag mode
         if flag_mode == FlagMode.FLAGGED:
             result = [e for e in result if e["rank"] in self.flagged_ranks]
         elif flag_mode == FlagMode.UNFLAGGED:
             result = [e for e in result if e["rank"] not in self.flagged_ranks]
+
+        if def_mode == DefMode.DEFINED:
+            result = [
+                e for e in result
+                if e["lemma"].lower() not in self.no_def_lemmas
+            ]
+        elif def_mode == DefMode.UNDEFINED:
+            result = [
+                e for e in result
+                if e["lemma"].lower() in self.no_def_lemmas
+            ]
+
 
         return result
 
@@ -219,6 +232,23 @@ def fetch_word_data(word):
         return None, f"Failed to parse entry: {e}"
 
 
+# ── NO-DEF LOADER ─────────────────────────────────────────────────────────────
+def load_no_def_lemmas(path):
+    """Return a set of lowercase lemmas that have no definition."""
+    no_def = set()
+    if not os.path.exists(path):
+        return no_def
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) >= 3 and parts[2].strip() == "NOT_FOUND":
+                    no_def.add(parts[1].strip().lower())
+    except OSError:
+        pass
+    return no_def
+
+
 # ── THEME ─────────────────────────────────────────────────────────────────────
 COLORS = {
     "bg":           "#0a0e14",
@@ -244,6 +274,7 @@ COLORS = {
     "tag_border":   "#2a4a60",
     "tag_text":     "#6896ae",
     "tag_x":        "#4a6a80",
+    "no_def_text":  "#c0504a",
 }
 
 FONT_MONO   = ("Segoe UI", 10)
@@ -324,17 +355,17 @@ class CorpusApp(ThemedWidgets):
         try:
             self.root.iconbitmap("icon.ico")
         except tk.TclError:
-            pass  # App still launches without the icon
+            pass
 
         self.root.title("Corpus")
-        self.root.geometry("1080x620")
-        self.root.minsize(1080, 560)
+        self.root.geometry("1080x540")
+        self.root.minsize(1080, 540)
         self.root.configure(bg=COLORS["bg"])
 
         self.current_word  = ""
         self.sort_col      = "Rank"
         self.sort_asc      = True
-        self._fetch_thread = None  # track in-flight lookup thread
+        self._fetch_thread = None
 
         # Filter state
         self.search_field  = tk.StringVar(value="All")
@@ -344,10 +375,13 @@ class CorpusApp(ThemedWidgets):
         self.range_max_var = tk.StringVar()
         self.pos_filter    = tk.StringVar(value="All")
         self.flag_mode     = tk.StringVar(value=FlagMode.ALL)
+        self.def_mode      = tk.StringVar(value=DefMode.ALL)
 
         self._apply_theme()
         self.build_ui()
         self.store.load_flags(FLAGS_PATH)
+        self.no_def_lemmas = load_no_def_lemmas(NO_DEF_PATH)
+        self.store.no_def_lemmas = self.no_def_lemmas
         self.load_data()
 
     # ── THEME ─────────────────────────────────────────────────────────────────
@@ -453,6 +487,7 @@ class CorpusApp(ThemedWidgets):
             "PoS":   "Part of Speech",
             "Freq":  "Frequency",
             "Disp":  "Dispersion",
+            "Def":   "Def",
         }
         for col, base in labels.items():
             indicator = (" ▲" if self.sort_asc else " ▼") if col == self.sort_col else ""
@@ -523,7 +558,7 @@ class CorpusApp(ThemedWidgets):
         self.pos_cb.pack(side="right")
         self.pos_cb.bind("<<ComboboxSelected>>", self.filter_entries)
 
-        # Row 3: Flag mode
+        # Row 3: Flag mode / Def mode
         row5 = tk.Frame(left_panel, bg=COLORS["bg"])
         row5.pack(fill="x", pady=(0, GAP))
 
@@ -531,8 +566,8 @@ class CorpusApp(ThemedWidgets):
 
         for value, label in [
             (FlagMode.ALL,       "All"),
-            (FlagMode.FLAGGED,   "Flagged only"),
-            (FlagMode.UNFLAGGED, "Unflagged only"),
+            (FlagMode.FLAGGED,   "Flagged"),
+            (FlagMode.UNFLAGGED, "Unflagged"),
         ]:
             tk.Radiobutton(
                 row5,
@@ -551,14 +586,41 @@ class CorpusApp(ThemedWidgets):
                 cursor="hand2",
             ).pack(side="left", padx=(0, 10))
 
-        # Row 4: Status + Reset
         row6 = tk.Frame(left_panel, bg=COLORS["bg"])
         row6.pack(fill="x", pady=(0, GAP))
 
-        self._button(row6, "Reset filters", self._reset_filters).pack(side="left")
+        self._label_on(row6, COLORS["bg"], "Definitions", muted=True).pack(side="left", padx=(0, 4))
+
+        for value, label in [
+            (DefMode.ALL, "All"),
+            (DefMode.DEFINED, "Defined"),
+            (DefMode.UNDEFINED, "Undefined"),
+        ]:
+            tk.Radiobutton(
+                row6,
+                text=label,
+                variable=self.def_mode,
+                value=value,
+                command=self.filter_entries,
+                bg=COLORS["bg"],
+                fg=COLORS["text_muted"],
+                activebackground=COLORS["bg"],
+                activeforeground=COLORS["accent_text"],
+                selectcolor=COLORS["surface2"],
+                highlightthickness=0,
+                bd=0,
+                font=FONT_BODY_S,
+                cursor="hand2",
+            ).pack(side="left", padx=(0, 10))
+
+        # Row 4: Status + Reset
+        row7 = tk.Frame(left_panel, bg=COLORS["bg"])
+        row7.pack(fill="x", pady=(0, GAP))
+
+        self._button(row7, "Reset filters", self._reset_filters).pack(side="left")
 
         self.status_label = tk.Label(
-            row6,
+            row7,
             text="Loading…",
             bg=COLORS["bg"],
             fg=COLORS["text_hint"],
@@ -573,7 +635,7 @@ class CorpusApp(ThemedWidgets):
         tree_frame = tk.Frame(tree_outer, bg=COLORS["surface"])
         tree_frame.pack(fill="both", expand=True, padx=1, pady=1)
 
-        columns = ("Rank", "Lemma", "PoS", "Freq", "Disp")
+        columns = ("Rank", "Lemma", "PoS", "Freq", "Disp", "Def")
         self.tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", style="Corpus.Treeview"
         )
@@ -583,17 +645,22 @@ class CorpusApp(ThemedWidgets):
         self.tree.heading("PoS",   text="Part of Speech", command=lambda: self._on_heading_click("PoS"))
         self.tree.heading("Freq",  text="Frequency",      command=lambda: self._on_heading_click("Freq"))
         self.tree.heading("Disp",  text="Dispersion",     command=lambda: self._on_heading_click("Disp"))
+        self.tree.heading("Def",   text="Def",            command=lambda: self._on_heading_click("Def"))
 
         self.tree.column("Rank",  width=58,  anchor="center", minwidth=40)
         self.tree.column("Lemma", width=130,                  minwidth=80)
         self.tree.column("PoS",   width=100, anchor="center", minwidth=70)
         self.tree.column("Freq",  width=90,  anchor="e",      minwidth=60)
         self.tree.column("Disp",  width=80,  anchor="center", minwidth=50)
+        self.tree.column("Def",   width=36,  anchor="center", minwidth=36)
 
         y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=y_scroll.set)
         self.tree.tag_configure(
             "flagged", background=COLORS["flag_bg"], foreground=COLORS["flag_text"]
+        )
+        self.tree.tag_configure(
+            "no_def", foreground=COLORS["no_def_text"]
         )
 
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -689,7 +756,6 @@ class CorpusApp(ThemedWidgets):
         )
         self.definition_box.grid(row=0, column=0, sticky="nsew")
 
-        # Rich text tags
         self.definition_box.tag_configure(
             "pos_header",
             font=("Segoe UI", 12, "bold"), foreground="#7ab0cc",
@@ -734,6 +800,7 @@ class CorpusApp(ThemedWidgets):
         self.range_max_var.set("")
         self.pos_filter.set("All")
         self.flag_mode.set(FlagMode.ALL)
+        self.def_mode.set(DefMode.ALL)
 
         if hasattr(self, "preset_cb") and self.preset_cb is not None:
             try:
@@ -766,6 +833,8 @@ class CorpusApp(ThemedWidgets):
         def sort_key(entry):
             if sort_field == "pos_name":
                 return POS_MAP.get(entry["pos"].lower(), entry["pos"]).lower()
+            if sort_field == "has_def":
+                return 0 if entry["lemma"].lower() in self.no_def_lemmas else 1
             if sort_type == "str":
                 return entry[sort_field].lower()
             return entry[sort_field]
@@ -773,8 +842,18 @@ class CorpusApp(ThemedWidgets):
         filtered.sort(key=sort_key, reverse=not self.sort_asc)
 
         for entry in filtered:
-            pos_name = POS_MAP.get(entry["pos"].lower(), entry["pos"])
-            tags     = ("flagged",) if entry["rank"] in self.store.flagged_ranks else ()
+            pos_name  = POS_MAP.get(entry["pos"].lower(), entry["pos"])
+            is_flagged = entry["rank"] in self.store.flagged_ranks
+            is_no_def  = entry["lemma"].lower() in self.no_def_lemmas
+            def_marker = "✗" if is_no_def else ""
+
+            if is_flagged:
+                tags = ("flagged",)
+            elif is_no_def:
+                tags = ("no_def",)
+            else:
+                tags = ()
+
             self.tree.insert(
                 "", "end",
                 values=(
@@ -783,6 +862,7 @@ class CorpusApp(ThemedWidgets):
                     pos_name,
                     f"{entry['freq']:,}",
                     f"{entry['dispersion']:.2f}",
+                    def_marker,
                 ),
                 tags=tags,
             )
@@ -799,8 +879,6 @@ class CorpusApp(ThemedWidgets):
         )
 
     def _collect_filters(self):
-        """Read all filter widgets and delegate to DictionaryStore."""
-
         def _try_float(s):
             try:
                 return float(s) if s.strip() else None
@@ -815,6 +893,7 @@ class CorpusApp(ThemedWidgets):
             range_max=_try_float(self.range_max_var.get()),
             pos_filter=self.pos_filter.get(),
             flag_mode=self.flag_mode.get(),
+            def_mode=self.def_mode.get(),
         )
 
     def filter_entries(self, event=None):
@@ -841,10 +920,8 @@ class CorpusApp(ThemedWidgets):
         self._set_definition_text("Loading…", "loading")
         self.update_flag_button()
 
-        # Fetch off the main thread so the UI stays responsive
         def do_fetch():
             result, error = fetch_word_data(word)
-            # Schedule UI update back on the main thread
             self.root.after(0, lambda: self._render_definition(word, result, error))
 
         self._fetch_thread = threading.Thread(target=do_fetch, daemon=True)
@@ -857,8 +934,6 @@ class CorpusApp(ThemedWidgets):
         self.definition_box.config(state="disabled")
 
     def _render_definition(self, word, result, error):
-        """Called on the main thread via root.after()."""
-        # Ignore stale responses if the user has moved on
         if word != self.current_word:
             return
 
@@ -913,7 +988,6 @@ class CorpusApp(ThemedWidgets):
         if not self.current_word:
             return
 
-        # Sanitize: keep only word characters to prevent PowerShell injection
         safe_word = re.sub(r"[^\w\s'-]", "", self.current_word)
         if not safe_word:
             return
@@ -952,7 +1026,7 @@ if __name__ == "__main__":
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("corpus.app")
     except AttributeError:
-        pass  # Non-Windows: silently skip
+        pass
 
     root = tk.Tk()
     app  = CorpusApp(root)
