@@ -43,7 +43,6 @@ COLUMN_SORT_MAP = {
     "PoS":   ("pos_name",   "str"),
     "Freq":  ("freq",       "num"),
     "Disp":  ("dispersion", "num"),
-    "Def":   ("has_def",    "num"),
 }
 
 
@@ -169,7 +168,7 @@ class DictionaryStore:
         q_is_num = self._is_numeric(query)
 
         def match_rank(e):  return str(e["rank"]).startswith(query)
-        def match_word(e):  return q_lower in e["lemma"].lower()
+        def match_lemma(e):  return q_lower in e["lemma"].lower()
         def match_pos(e):
             display = POS_MAP.get(e["pos"].lower(), e["pos"]).lower()
             return q_lower in display or q_lower == e["pos"].lower()
@@ -177,7 +176,7 @@ class DictionaryStore:
         def match_disp(e):  return str(round(e["dispersion"], 2)).startswith(query)
         def match_all(e):
             return (
-                match_word(e)
+                match_lemma(e)
                 or match_pos(e)
                 or (q_is_num and (match_rank(e) or match_freq(e) or match_disp(e)))
             )
@@ -185,7 +184,7 @@ class DictionaryStore:
         dispatch = {
             "All":            match_all,
             "Rank":           match_rank,
-            "Word":           match_word,
+            "Lemma":           match_lemma,
             "Part of Speech": match_pos,
             "Frequency":      match_freq,
             "Dispersion":     match_disp,
@@ -467,7 +466,7 @@ class CorpusApp(ThemedWidgets):
             return
 
         self.flag_button.config(
-            text="★  Unflag Word" if rank in self.store.flagged_ranks else "☆  Flag Word"
+            text="⚑  Unflag Word" if rank in self.store.flagged_ranks else "⚐  Flag Word"
         )
 
     # ── SORTING ───────────────────────────────────────────────────────────────
@@ -483,11 +482,10 @@ class CorpusApp(ThemedWidgets):
     def _update_headings(self):
         labels = {
             "Rank":  "Rank",
-            "Lemma": "Word",
+            "Lemma": "Lemma",
             "PoS":   "Part of Speech",
             "Freq":  "Frequency",
             "Disp":  "Dispersion",
-            "Def":   "Def",
         }
         for col, base in labels.items():
             indicator = (" ▲" if self.sort_asc else " ▼") if col == self.sort_col else ""
@@ -512,7 +510,7 @@ class CorpusApp(ThemedWidgets):
 
         field_cb = self._combobox(
             row1,
-            ["All", "Rank", "Word", "Part of Speech", "Frequency", "Dispersion"],
+            ["All", "Rank", "Lemma", "Part of Speech", "Frequency", "Dispersion"],
             textvariable=self.search_field,
             width=15,
         )
@@ -635,30 +633,26 @@ class CorpusApp(ThemedWidgets):
         tree_frame = tk.Frame(tree_outer, bg=COLORS["surface"])
         tree_frame.pack(fill="both", expand=True, padx=1, pady=1)
 
-        columns = ("Rank", "Lemma", "PoS", "Freq", "Disp", "Def")
+        columns = ("Rank", "Lemma", "PoS", "Freq", "Disp")
         self.tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", style="Corpus.Treeview"
         )
 
         self.tree.heading("Rank",  text="Rank ▲",        command=lambda: self._on_heading_click("Rank"))
-        self.tree.heading("Lemma", text="Word",           command=lambda: self._on_heading_click("Lemma"))
+        self.tree.heading("Lemma", text="Lemma",           command=lambda: self._on_heading_click("Lemma"))
         self.tree.heading("PoS",   text="Part of Speech", command=lambda: self._on_heading_click("PoS"))
         self.tree.heading("Freq",  text="Frequency",      command=lambda: self._on_heading_click("Freq"))
         self.tree.heading("Disp",  text="Dispersion",     command=lambda: self._on_heading_click("Disp"))
-        self.tree.heading("Def",   text="Def",            command=lambda: self._on_heading_click("Def"))
 
         self.tree.column("Rank",  width=58,  anchor="center", minwidth=40)
         self.tree.column("Lemma", width=130,                  minwidth=80)
         self.tree.column("PoS",   width=100, anchor="center", minwidth=70)
         self.tree.column("Freq",  width=90,  anchor="e",      minwidth=60)
         self.tree.column("Disp",  width=80,  anchor="center", minwidth=50)
-        self.tree.column("Def",   width=36,  anchor="center", minwidth=36)
 
         y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=y_scroll.set)
-        self.tree.tag_configure(
-            "flagged", background=COLORS["flag_bg"], foreground=COLORS["flag_text"]
-        )
+
         self.tree.tag_configure(
             "no_def", foreground=COLORS["no_def_text"]
         )
@@ -816,9 +810,6 @@ class CorpusApp(ThemedWidgets):
         try:
             self.store.load_dictionary(DICTIONARY_PATH)
             self.populate_tree()
-            self.status_label.config(
-                text=f"{len(self.store.entries):,} entries loaded"
-            )
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
 
@@ -845,24 +836,24 @@ class CorpusApp(ThemedWidgets):
             pos_name  = POS_MAP.get(entry["pos"].lower(), entry["pos"])
             is_flagged = entry["rank"] in self.store.flagged_ranks
             is_no_def  = entry["lemma"].lower() in self.no_def_lemmas
-            def_marker = "✗" if is_no_def else ""
 
+            lemma_display = f"{entry['lemma']} ⚑" if is_flagged else entry["lemma"]
+
+            tags = []
             if is_flagged:
-                tags = ("flagged",)
-            elif is_no_def:
-                tags = ("no_def",)
-            else:
-                tags = ()
+                tags.append("flagged")
+            if is_no_def:
+                tags.append("no_def")
+            tags = tuple(tags)
 
             self.tree.insert(
                 "", "end",
                 values=(
                     entry["rank"],
-                    entry["lemma"],
+                    lemma_display,
                     pos_name,
                     f"{entry['freq']:,}",
                     f"{entry['dispersion']:.2f}",
-                    def_marker,
                 ),
                 tags=tags,
             )
@@ -871,10 +862,14 @@ class CorpusApp(ThemedWidgets):
         shown_flagged = sum(1 for e in filtered if e["rank"] in self.store.flagged_ranks)
         flagged_pct   = (shown_flagged / shown_count * 100) if shown_count else 0
 
+        shown_defined = sum(1 for e in filtered if e["lemma"].lower() not in self.store.no_def_lemmas)
+        defined_pct = (shown_defined / shown_count * 100) if shown_count else 0
+
         self.status_label.config(
             text=(
-                f"{shown_count:,} results  ·  "
-                f"{shown_flagged:,} flagged ({flagged_pct:.1f}%)"
+                f"{shown_count:,} Results  ·  "
+                f"{shown_flagged:,} Flagged ({flagged_pct:.1f}%)  ·  "
+                f"{shown_defined:,} Defined ({defined_pct:.1f}%)"
             )
         )
 
@@ -906,7 +901,7 @@ class CorpusApp(ThemedWidgets):
             return
 
         values              = self.tree.item(selected[0])["values"]
-        word, pos, freq     = values[1], values[2], values[3]
+        word, pos, freq     = values[1][:-2] if values[1].endswith(" ⚑") else values[1], values[2], values[3]
         dispersion, rank    = values[4], values[0]
 
         self.current_word = word
