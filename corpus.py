@@ -466,7 +466,7 @@ class CorpusApp(ThemedWidgets):
             return
 
         self.flag_button.config(
-            text="⚑  Unflag Word" if rank in self.store.flagged_ranks else "⚐  Flag Word"
+            text="⚑  Unflag Lemma" if rank in self.store.flagged_ranks else "⚐  Flag Lemma"
         )
 
     # ── SORTING ───────────────────────────────────────────────────────────────
