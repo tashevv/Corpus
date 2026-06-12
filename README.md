@@ -4,7 +4,7 @@ English language database and dictionary.
 
 
 Dataset is from https://www.wordfrequency.info/ \
-Dictionary is from https://dictionaryapi.dev/
+Dictionary is from https://dictionaryapi.dev/ and https://freedictionaryapi.com/
 
 
 corpus/\
