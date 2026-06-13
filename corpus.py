@@ -35,6 +35,7 @@ POS_MAP = {
     "x": "Unknown",
 }
 
+# inverse of POS_MAP
 POS_NAME_TO_CODE = {v: k for k, v in POS_MAP.items()}
 
 COLUMN_SORT_MAP = {
@@ -43,6 +44,29 @@ COLUMN_SORT_MAP = {
     "PoS":   ("pos_name",   "str"),
     "Freq":  ("freq",       "num"),
     "Disp":  ("dispersion", "num"),
+}
+
+LANGUAGES = {
+    "Select language": "",
+    "Afrikaans": "af", "Albanian": "sq", "Arabic": "ar", "Azerbaijani": "az",
+    "Basque": "eu", "Belarusian": "be", "Bengali": "bn", "Bosnian": "bs",
+    "Bulgarian": "bg", "Catalan": "ca", "Chinese (Simplified)": "zh-CN",
+    "Chinese (Traditional)": "zh-TW", "Croatian": "hr", "Czech": "cs",
+    "Danish": "da", "Dutch": "nl", "Esperanto": "eo", "Estonian": "et",
+    "Finnish": "fi", "French": "fr", "Galician": "gl", "Georgian": "ka",
+    "German": "de", "Greek": "el", "Gujarati": "gu", "Haitian Creole": "ht",
+    "Hebrew": "he", "Hindi": "hi", "Hungarian": "hu", "Icelandic": "is",
+    "Indonesian": "id", "Irish": "ga", "Italian": "it", "Japanese": "ja",
+    "Kannada": "kn", "Kazakh": "kk", "Korean": "ko", "Kurdish": "ku",
+    "Kyrgyz": "ky", "Latvian": "lv", "Lithuanian": "lt", "Macedonian": "mk",
+    "Malay": "ms", "Maltese": "mt", "Maori": "mi", "Marathi": "mr",
+    "Mongolian": "mn", "Nepali": "ne", "Norwegian": "no", "Persian": "fa",
+    "Polish": "pl", "Portuguese": "pt", "Punjabi": "pa", "Romanian": "ro",
+    "Russian": "ru", "Serbian": "sr", "Sinhalese": "si", "Slovak": "sk",
+    "Slovenian": "sl", "Spanish": "es", "Swahili": "sw", "Swedish": "sv",
+    "Tajik": "tg", "Tamil": "ta", "Telugu": "te", "Thai": "th",
+    "Turkish": "tr", "Ukrainian": "uk", "Urdu": "ur", "Uzbek": "uz",
+    "Vietnamese": "vi", "Welsh": "cy", "Xhosa": "xh", "Zulu": "zu",
 }
 
 
@@ -159,7 +183,6 @@ class DictionaryStore:
                 e for e in result
                 if e["lemma"].lower() in self.no_def_lemmas
             ]
-
 
         return result
 
@@ -344,12 +367,19 @@ class ThemedWidgets:
         )
 
 
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+def _strip_flag_indicator(label: str) -> str:
+    """Remove the ' ⚑' suffix added to flagged lemmas in the treeview."""
+    return label[:-2] if label.endswith(" ⚑") else label
+
+
 # ── MAIN APP ──────────────────────────────────────────────────────────────────
 class CorpusApp(ThemedWidgets):
 
     def __init__(self, root):
         self.root  = root
         self.store = DictionaryStore()
+        self._last_definition_data = None
 
         try:
             self.root.iconbitmap("icon.ico")
@@ -364,7 +394,15 @@ class CorpusApp(ThemedWidgets):
         self.current_word  = ""
         self.sort_col      = "Rank"
         self.sort_asc      = True
-        self._fetch_thread = None
+
+        # FIX #5: generation counter replaces bare thread reference.
+        # Each word selection increments _fetch_gen; the callback checks its
+        # captured value against the current one before touching the UI, so
+        # a slow response from an earlier selection is silently discarded.
+        self._fetch_gen    = 0
+
+        # FIX #8: debounce handle for filter keystrokes
+        self._filter_job   = None
 
         # Filter state
         self.search_field  = tk.StringVar(value="All")
@@ -674,8 +712,13 @@ class CorpusApp(ThemedWidgets):
         right_panel = tk.Frame(root_frame, bg=COLORS["bg"], padx=16, pady=4)
         right_panel.pack(side="right", fill="both", expand=True)
 
+        # Configure grid: definition gets weight, translation is fixed
+        right_panel.grid_rowconfigure(6, weight=7)  # definition box
+        right_panel.grid_rowconfigure(8, weight=3)  # translation box
+        right_panel.grid_columnconfigure(0, weight=1)
+
         title_frame = tk.Frame(right_panel, bg=COLORS["bg"])
-        title_frame.pack(anchor="nw", fill="x", pady=(0, 6))
+        title_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
         self.word_title = tk.Label(
             title_frame, text="Select a word", font=FONT_TITLE,
@@ -717,17 +760,20 @@ class CorpusApp(ThemedWidgets):
             right_panel, text="", font=FONT_META,
             bg=COLORS["bg"], fg=COLORS["text_muted"], justify="left",
         )
-        self.meta_label.pack(anchor="nw", pady=(0, 10))
+        self.meta_label.grid(row=1, column=0, sticky="w", pady=(0, 10))
 
         self.flag_button = self._button(
             right_panel, "☆  Flag Word", self.toggle_flag, accent=False, width=16,
         )
-        self.flag_button.pack(anchor="nw", pady=(0, 12))
+        self.flag_button.grid(row=2, column=0, sticky="w", pady=(0, 12))
 
-        tk.Frame(right_panel, bg=COLORS["border"], height=1).pack(fill="x", pady=(0, 12))
+        tk.Frame(right_panel, bg=COLORS["border"], height=1).grid(
+            row=3, column=0, sticky="ew", pady=(0, 12)
+        )
 
+        # Definition box
         definition_frame = tk.Frame(right_panel, bg=COLORS["bg"])
-        definition_frame.pack(fill="both", expand=True)
+        definition_frame.grid(row=6, column=0, sticky="nsew")
         definition_frame.grid_rowconfigure(0, weight=1)
         definition_frame.grid_columnconfigure(0, weight=1)
 
@@ -747,6 +793,7 @@ class CorpusApp(ThemedWidgets):
             highlightcolor=COLORS["accent"],
             padx=12, pady=10,
             spacing2=4, spacing3=2,
+            height=1,
         )
         self.definition_box.grid(row=0, column=0, sticky="nsew")
 
@@ -785,6 +832,92 @@ class CorpusApp(ThemedWidgets):
         self.definition_box.configure(yscrollcommand=definition_scrollbar.set)
         definition_scrollbar.grid(row=0, column=1, sticky="ns")
 
+        # ── TRANSLATION ───────────────────────────────────────────────────────
+        trans_header = tk.Frame(right_panel, bg=COLORS["bg"])
+        trans_header.grid(row=7, column=0, sticky="ew", pady=(10, 4))
+
+        tk.Label(
+            trans_header, text="Translation", font=("Segoe UI Semibold", 10),
+            bg=COLORS["bg"], fg=COLORS["text_muted"],
+        ).pack(side="left", padx=(0, 10))
+
+        self.lang_var = tk.StringVar(value="Select language")
+        lang_cb = ttk.Combobox(
+            trans_header,
+            values=list(LANGUAGES.keys()),
+            textvariable=self.lang_var,
+            state="readonly",
+            width=22,
+            style="Dark.TCombobox",
+        )
+        lang_cb.pack(side="left")
+        lang_cb.bind("<<ComboboxSelected>>", self._on_language_select)
+
+        trans_outer = tk.Frame(right_panel, bg=COLORS["border"], bd=1, relief="flat")
+        trans_outer.grid(row=8, column=0, sticky="nsew", pady=(0, 4))
+        trans_outer.grid_rowconfigure(0, weight=1)
+        trans_outer.grid_columnconfigure(0, weight=1)
+
+        trans_inner = tk.Frame(trans_outer, bg=COLORS["surface"])
+        trans_inner.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
+        trans_inner.grid_rowconfigure(0, weight=1)
+        trans_inner.grid_columnconfigure(0, weight=1)
+
+        self.translation_box = tk.Text(
+            trans_inner,
+            wrap="word",
+            font=("Segoe UI", 11),
+            bg=COLORS["surface"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["accent"],
+            selectbackground=COLORS["treeselect"],
+            selectforeground=COLORS["accent_text"],
+            relief="flat", bd=0,
+            highlightthickness=0,
+            padx=12, pady=8,
+            state="disabled",
+            height=1,
+        )
+        self.translation_box.grid(row=0, column=0, sticky="nsew")
+
+        self.translation_box.tag_configure(
+            "trans_text", font=("Segoe UI", 11), foreground=COLORS["text_primary"]
+        )
+        self.translation_box.tag_configure(
+            "loading", font=("Segoe UI", 11), foreground=COLORS["text_hint"]
+        )
+        self.translation_box.tag_configure(
+            "error", font=("Segoe UI", 11), foreground=COLORS["danger"]
+        )
+        self.translation_box.tag_configure(
+            "pos_header",
+            font=("Segoe UI", 12, "bold"), foreground="#7ab0cc",
+            spacing1=10, spacing3=4,
+        )
+        self.translation_box.tag_configure(
+            "def_num", font=("Segoe UI", 11), foreground=COLORS["text_hint"]
+        )
+        self.translation_box.tag_configure(
+            "def_text", font=("Segoe UI", 13), foreground=COLORS["text_primary"]
+        )
+        self.translation_box.tag_configure(
+            "example",
+            font=("Segoe UI", 11, "italic"), foreground=COLORS["text_muted"],
+            lmargin1=20, lmargin2=20, spacing1=2,
+        )
+        self.translation_box.tag_configure(
+            "syn_label", font=("Segoe UI", 10, "bold"), foreground="#6896ae"
+        )
+        self.translation_box.tag_configure(
+            "syn_val", font=("Segoe UI", 10), foreground="#6896ae"
+        )
+
+        trans_scroll = ttk.Scrollbar(
+            trans_inner, orient="vertical", command=self.translation_box.yview
+        )
+        self.translation_box.configure(yscrollcommand=trans_scroll.set)
+        trans_scroll.grid(row=0, column=1, sticky="ns")
+
     # ── RESET ─────────────────────────────────────────────────────────────────
     def _reset_filters(self, refilter=True):
         self.search_text.set("")
@@ -795,6 +928,10 @@ class CorpusApp(ThemedWidgets):
         self.pos_filter.set("All")
         self.flag_mode.set(FlagMode.ALL)
         self.def_mode.set(DefMode.ALL)
+
+        self.sort_col = "Rank"
+        self.sort_asc = True
+        self._update_headings()
 
         if hasattr(self, "preset_cb") and self.preset_cb is not None:
             try:
@@ -891,20 +1028,43 @@ class CorpusApp(ThemedWidgets):
             def_mode=self.def_mode.get(),
         )
 
+    # FIX #8: debounce filter — cancels any pending redraw and schedules a new
+    # one 120 ms later, so rapid keystrokes collapse into a single tree rebuild.
     def filter_entries(self, event=None):
+        if self._filter_job is not None:
+            self.root.after_cancel(self._filter_job)
+        self._filter_job = self.root.after(120, self._run_filter)
+
+    def _run_filter(self):
+        self._filter_job = None
         self.populate_tree()
 
     # ── SELECT WORD ───────────────────────────────────────────────────────────
+    # FIX #3: extract word cleanly via helper; unpack values explicitly.
+    # FIX #5: increment generation counter so any in-flight fetch for a
+    # previous word will see a stale gen and discard its result.
     def on_select_word(self, event):
         selected = self.tree.selection()
         if not selected:
             return
 
-        values              = self.tree.item(selected[0])["values"]
-        word, pos, freq     = values[1][:-2] if values[1].endswith(" ⚑") else values[1], values[2], values[3]
-        dispersion, rank    = values[4], values[0]
+        values     = self.tree.item(selected[0])["values"]
+        rank       = values[0]
+        word       = _strip_flag_indicator(values[1])
+        pos        = values[2]
+        freq       = values[3]
+        dispersion = values[4]
 
         self.current_word = word
+        self._fetch_gen  += 1
+        gen = self._fetch_gen  # capture for closure
+
+        if self.lang_var.get() != "Select language":
+            self.translation_box.config(state="normal")
+            self.translation_box.delete("1.0", tk.END)
+            self.translation_box.insert(tk.END, "Translating…", "loading")
+            self.translation_box.config(state="disabled")
+
         self.word_title.config(text=word)
         self.phonetic_label.config(text="")
         self.phonetic_label.pack_configure(padx=(0, 0))
@@ -917,10 +1077,11 @@ class CorpusApp(ThemedWidgets):
 
         def do_fetch():
             result, error = fetch_word_data(word)
-            self.root.after(0, lambda: self._render_definition(word, result, error))
+            # Only update the UI if this fetch is still the most recent one.
+            if gen == self._fetch_gen:
+                self.root.after(0, lambda: self._render_definition(result, error))
 
-        self._fetch_thread = threading.Thread(target=do_fetch, daemon=True)
-        self._fetch_thread.start()
+        threading.Thread(target=do_fetch, daemon=True).start()
 
     def _set_definition_text(self, text, tag="def_text"):
         self.definition_box.config(state="normal")
@@ -928,16 +1089,17 @@ class CorpusApp(ThemedWidgets):
         self.definition_box.insert(tk.END, text, tag)
         self.definition_box.config(state="disabled")
 
-    def _render_definition(self, word, result, error):
-        if word != self.current_word:
-            return
-
+    # FIX #5: word-equality guard removed — generation counter is sufficient
+    # and more robust (handles rapid re-selection of the same word correctly).
+    def _render_definition(self, result, error):
         self.definition_box.config(state="normal")
         self.definition_box.delete("1.0", tk.END)
 
         if error:
+            self._last_definition_data = None
             self.definition_box.insert(tk.END, error, "error")
         else:
+            self._last_definition_data = result
             ph = result.get("phonetic", "")
             if ph:
                 self.phonetic_label.config(text=ph)
@@ -977,6 +1139,8 @@ class CorpusApp(ThemedWidgets):
                     self.definition_box.insert(tk.END, ", ".join(ants[:10]) + "\n", "syn_val")
 
         self.definition_box.config(state="disabled")
+        if self.lang_var.get() != "Select language":
+            self.root.after(0, self._on_language_select)
 
     # ── SPEAK WORD ────────────────────────────────────────────────────────────
     def speak_word(self):
@@ -1013,6 +1177,131 @@ class CorpusApp(ThemedWidgets):
     def _open_google(self, event=None):
         if self.current_word:
             webbrowser.open(f"https://www.google.com/search?q={self.current_word}")
+
+    # ── TRANSLATE ─────────────────────────────────────────────────────────────────
+    def _on_language_select(self, event=None):
+        lang_name = self.lang_var.get()
+        if not lang_name or lang_name == "Select language":
+            self.translation_box.config(state="normal")
+            self.translation_box.delete("1.0", tk.END)
+            self.translation_box.config(state="disabled")
+            return
+        lang_code = LANGUAGES.get(lang_name, "")
+        if not lang_code:
+            return
+
+        if not self._last_definition_data:
+            # No structured data — translate the raw error text directly
+            raw = self.definition_box.get("1.0", tk.END).strip()
+            if not raw:
+                return
+            self.translation_box.config(state="normal")
+            self.translation_box.delete("1.0", tk.END)
+            self.translation_box.insert(tk.END, "Translating…", "loading")
+            self.translation_box.config(state="disabled")
+
+            def do_translate_raw():
+                import urllib.request, urllib.parse
+                try:
+                    params = urllib.parse.urlencode({
+                        "client": "gtx", "sl": "en", "tl": lang_code, "dt": "t", "q": raw,
+                    })
+                    url = f"https://translate.googleapis.com/translate_a/single?{params}"
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        data = json.loads(resp.read().decode())
+                    result = "".join(seg[0] for seg in data[0] if seg[0])
+                    err = None
+                except Exception as e:
+                    result = None
+                    err = str(e)
+
+                def update():
+                    self.translation_box.config(state="normal")
+                    self.translation_box.delete("1.0", tk.END)
+                    if result is not None:
+                        self.translation_box.insert(tk.END, result, "trans_text")
+                    else:
+                        self.translation_box.insert(tk.END, f"Translation failed: {err}", "error")
+                    self.translation_box.config(state="disabled")
+
+                self.root.after(0, update)
+
+            threading.Thread(target=do_translate_raw, daemon=True).start()
+            return
+
+        self.translation_box.config(state="normal")
+        self.translation_box.delete("1.0", tk.END)
+        self.translation_box.insert(tk.END, "Translating…", "loading")
+        self.translation_box.config(state="disabled")
+
+        data = self._last_definition_data
+
+        def _translate_text(text):
+            import urllib.request, urllib.parse
+            if not text.strip():
+                return text
+            params = urllib.parse.urlencode({
+                "client": "gtx", "sl": "en", "tl": lang_code, "dt": "t", "q": text,
+            })
+            url = f"https://translate.googleapis.com/translate_a/single?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                d = json.loads(resp.read().decode())
+            return "".join(seg[0] for seg in d[0] if seg[0])
+
+        def do_translate():
+            try:
+                # Build a list of (text, tag) pairs mirroring _render_definition
+                segments = []
+                meanings = data.get("meanings", [])
+                for m_idx, meaning in enumerate(meanings):
+                    part = meaning.get("partOfSpeech", "")
+                    syns = meaning.get("synonyms", [])
+                    ants = meaning.get("antonyms", [])
+
+                    if m_idx > 0:
+                        segments.append(("\n", "def_text"))
+                    segments.append((f"{part.upper()}\n", "pos_header"))
+
+                    for i, d in enumerate(meaning.get("definitions", [])[:8], 1):
+                        definition = d.get("definition", "")
+                        example    = d.get("example", "")
+                        d_syns     = d.get("synonyms", [])
+
+                        segments.append((f"{i}. ", "def_num"))
+                        segments.append((_translate_text(definition) + "\n", "def_text"))
+                        if example:
+                            segments.append((f"  ↳ {_translate_text(example)}\n", "example"))
+                        if d_syns:
+                            segments.append(("  syn: ", "syn_label"))
+                            segments.append((", ".join(d_syns[:6]) + "\n", "syn_val"))
+
+                    if syns:
+                        segments.append(("\nSynonyms: ", "syn_label"))
+                        segments.append((", ".join(syns[:10]) + "\n", "syn_val"))
+                    if ants:
+                        segments.append(("Antonyms: ", "syn_label"))
+                        segments.append((", ".join(ants[:10]) + "\n", "syn_val"))
+
+                err = None
+            except Exception as e:
+                segments = None
+                err = str(e)
+
+            def update():
+                self.translation_box.config(state="normal")
+                self.translation_box.delete("1.0", tk.END)
+                if segments is not None:
+                    for text, tag in segments:
+                        self.translation_box.insert(tk.END, text, tag)
+                else:
+                    self.translation_box.insert(tk.END, f"Translation failed: {err}", "error")
+                self.translation_box.config(state="disabled")
+
+            self.root.after(0, update)
+
+        threading.Thread(target=do_translate, daemon=True).start()
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
