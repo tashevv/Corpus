@@ -230,7 +230,7 @@ def fetch_word_data(word):
     try:
         with sqlite3.connect(DB_PATH) as con:
             cur = con.cursor()
-            cur.execute("SELECT json FROM entries WHERE word = ?", (word,))
+            cur.execute("SELECT json FROM entries WHERE word = ? COLLATE NOCASE", (word,))
             row = cur.fetchone()
 
         if row is None:
