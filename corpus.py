@@ -772,7 +772,7 @@ class CorpusApp(ThemedWidgets):
         )
 
         # Definition box
-        definition_frame = tk.Frame(right_panel, bg=COLORS["bg"])
+        definition_frame = tk.Frame(right_panel, bg=COLORS["border"], bd=1, relief="flat")
         definition_frame.grid(row=6, column=0, sticky="nsew")
         definition_frame.grid_rowconfigure(0, weight=1)
         definition_frame.grid_columnconfigure(0, weight=1)
@@ -786,14 +786,13 @@ class CorpusApp(ThemedWidgets):
             insertbackground=COLORS["accent"],
             selectbackground=COLORS["treeselect"],
             selectforeground=COLORS["accent_text"],
-            relief="flat",
             bd=0,
-            highlightthickness=1,
-            highlightbackground=COLORS["border"],
-            highlightcolor=COLORS["accent"],
-            padx=12, pady=10,
+            highlightthickness=0,
             spacing2=4, spacing3=2,
             height=1,
+            relief="flat",
+            padx=12, pady=8,
+            state="disabled",
         )
         self.definition_box.grid(row=0, column=0, sticky="nsew")
 
