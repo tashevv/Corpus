@@ -271,8 +271,10 @@ def load_no_def_lemmas(path):
     return no_def
 
 
-# ── THEME ─────────────────────────────────────────────────────────────────────
-COLORS = {
+# ── THEMES ────────────────────────────────────────────────────────────────────
+# Each palette below drives every color in the UI. Switching THEMES[name] and
+# re-applying is enough to re-skin the whole app — see CorpusApp._apply_color_theme.
+DARK_COLORS = {
     "bg":           "#0a0e14",
     "surface":      "#0d1117",
     "surface2":     "#161b22",
@@ -297,6 +299,42 @@ COLORS = {
     "tag_text":     "#6896ae",
     "tag_x":        "#4a6a80",
     "no_def_text":  "#c0504a",
+    "pos_header":   "#7ab0cc",
+    "on_accent":    "#ffffff",
+}
+
+LIGHT_COLORS = {
+    "bg":           "#f5f7f9",
+    "surface":      "#ffffff",
+    "surface2":     "#eef1f4",
+    "border":       "#d8dee4",
+    "accent":       "#2f7488",
+    "accent_dim":   "#255a6a",
+    "accent_text":  "#1f5566",
+    "flag_bg":      "#e3f0f5",
+    "flag_text":    "#2f7488",
+    "text_primary": "#1b232a",
+    "text_muted":   "#5b6b76",
+    "text_hint":    "#8a99a3",
+    "success":      "#2e9142",
+    "danger":       "#c9372c",
+    "entry_bg":     "#ffffff",
+    "entry_focus":  "#2f7488",
+    "btn_bg":       "#eef1f4",
+    "btn_hover":    "#dde5ea",
+    "treeselect":   "#cfe6ee",
+    "tag_bg":       "#e3f0f5",
+    "tag_border":   "#b9d3dd",
+    "tag_text":     "#2f7488",
+    "tag_x":        "#5b6b76",
+    "no_def_text":  "#b23b34",
+    "pos_header":   "#286a80",
+    "on_accent":    "#ffffff",
+}
+
+THEMES = {
+    "Dark":  DARK_COLORS,
+    "Light": LIGHT_COLORS,
 }
 
 FONT_MONO   = ("Segoe UI", 10)
@@ -311,40 +349,57 @@ FONT_STATUS = ("Segoe UI", 9)
 
 # ── THEMED WIDGET MIXINS ──────────────────────────────────────────────────────
 class ThemedWidgets:
-    """Factory methods for consistently styled widgets. Mixed into CorpusApp."""
+    """Factory methods for consistently styled widgets. Mixed into CorpusApp.
+
+    Every widget created here registers a small "re-apply colors" closure via
+    self._register_theme(...) so that CorpusApp._apply_color_theme can restyle
+    the whole tree later without rebuilding it.
+    """
+
+    def _register_theme(self, apply_fn):
+        apply_fn()
+        self._theme_registry.append(apply_fn)
+
+    def _frame(self, parent, bg_key, **kw):
+        f = tk.Frame(parent, **kw)
+        self._register_theme(lambda: f.configure(bg=self.colors[bg_key]))
+        return f
 
     def _entry(self, parent, textvariable=None, **kw):
-        return tk.Entry(
+        e = tk.Entry(
             parent,
-            bg=COLORS["entry_bg"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["accent"],
-            selectbackground=COLORS["treeselect"],
-            selectforeground=COLORS["accent_text"],
             relief="flat",
             highlightthickness=1,
-            highlightbackground=COLORS["border"],
-            highlightcolor=COLORS["accent"],
             font=FONT_BODY,
             textvariable=textvariable,
             **kw,
         )
+        def apply():
+            e.configure(
+                bg=self.colors["entry_bg"],
+                fg=self.colors["text_primary"],
+                insertbackground=self.colors["accent"],
+                selectbackground=self.colors["treeselect"],
+                selectforeground=self.colors["accent_text"],
+                highlightbackground=self.colors["border"],
+                highlightcolor=self.colors["accent"],
+            )
+        self._register_theme(apply)
+        return e
 
-    def _label_on(self, parent, bg, text, muted=False, **kw):
-        color = COLORS["text_muted"] if muted else COLORS["text_primary"]
-        return tk.Label(parent, text=text, bg=bg, fg=color, font=FONT_LABEL, **kw)
+    def _label_on(self, parent, bg_key, text, muted=False, **kw):
+        lbl = tk.Label(parent, text=text, font=FONT_LABEL, **kw)
+        def apply():
+            color = self.colors["text_muted"] if muted else self.colors["text_primary"]
+            lbl.configure(bg=self.colors[bg_key], fg=color)
+        self._register_theme(apply)
+        return lbl
 
     def _button(self, parent, text, command, accent=False, **kw):
-        bg = COLORS["accent"] if accent else COLORS["btn_bg"]
-        fg = "#fff" if accent else COLORS["text_primary"]
-        return tk.Button(
+        b = tk.Button(
             parent,
             text=text,
             command=command,
-            bg=bg,
-            fg=fg,
-            activebackground=COLORS["accent_dim"] if accent else COLORS["btn_hover"],
-            activeforeground="#fff" if accent else COLORS["text_primary"],
             relief="flat",
             bd=0,
             highlightthickness=0,
@@ -354,6 +409,21 @@ class ThemedWidgets:
             pady=5,
             **kw,
         )
+        def apply():
+            if accent:
+                b.configure(
+                    bg=self.colors["accent"], fg=self.colors["on_accent"],
+                    activebackground=self.colors["accent_dim"],
+                    activeforeground=self.colors["on_accent"],
+                )
+            else:
+                b.configure(
+                    bg=self.colors["btn_bg"], fg=self.colors["text_primary"],
+                    activebackground=self.colors["btn_hover"],
+                    activeforeground=self.colors["text_primary"],
+                )
+        self._register_theme(apply)
+        return b
 
     def _combobox(self, parent, values, textvariable=None, width=14, **kw):
         return ttk.Combobox(
@@ -361,7 +431,7 @@ class ThemedWidgets:
             values=values,
             state="readonly",
             width=width,
-            style="Dark.TCombobox",
+            style="Themed.TCombobox",
             textvariable=textvariable,
             **kw,
         )
@@ -381,6 +451,14 @@ class CorpusApp(ThemedWidgets):
         self.store = DictionaryStore()
         self._last_definition_data = None
 
+        # Theming: self.colors is the *active* palette; self._theme_registry
+        # holds closures (one per themed widget/tag) that re-read self.colors
+        # and push the new values onto the widget. Switching themes just swaps
+        # self.colors and replays the registry.
+        self.theme_var       = tk.StringVar(value="Dark")
+        self.colors          = dict(THEMES[self.theme_var.get()])
+        self._theme_registry = []
+
         try:
             self.root.iconbitmap("icon.ico")
         except tk.TclError:
@@ -389,7 +467,6 @@ class CorpusApp(ThemedWidgets):
         self.root.title("Corpus")
         self.root.geometry("1080x540")
         self.root.minsize(1080, 540)
-        self.root.configure(bg=COLORS["bg"])
 
         self.current_word  = ""
         self.sort_col      = "Rank"
@@ -414,23 +491,24 @@ class CorpusApp(ThemedWidgets):
         self.flag_mode     = tk.StringVar(value=FlagMode.ALL)
         self.def_mode      = tk.StringVar(value=DefMode.ALL)
 
-        self._apply_theme()
+        self._apply_ttk_style()
         self.build_ui()
+        self.root.configure(bg=self.colors["bg"])
         self.store.load_flags(FLAGS_PATH)
         self.no_def_lemmas = load_no_def_lemmas(NO_DEF_PATH)
         self.store.no_def_lemmas = self.no_def_lemmas
         self.load_data()
 
-    # ── THEME ─────────────────────────────────────────────────────────────────
-    def _apply_theme(self):
+    # ── THEME (ttk styles) ───────────────────────────────────────────────────
+    def _apply_ttk_style(self):
         style = ttk.Style(self.root)
         style.theme_use("clam")
 
         style.configure(
             "Corpus.Treeview",
-            background=COLORS["surface"],
-            foreground=COLORS["text_primary"],
-            fieldbackground=COLORS["surface"],
+            background=self.colors["surface"],
+            foreground=self.colors["text_primary"],
+            fieldbackground=self.colors["surface"],
             rowheight=26,
             borderwidth=0,
             relief="flat",
@@ -438,8 +516,8 @@ class CorpusApp(ThemedWidgets):
         )
         style.configure(
             "Corpus.Treeview.Heading",
-            background=COLORS["surface2"],
-            foreground=COLORS["text_muted"],
+            background=self.colors["surface2"],
+            foreground=self.colors["text_muted"],
             borderwidth=0,
             relief="flat",
             font=("Segoe UI", 9, "bold"),
@@ -447,31 +525,79 @@ class CorpusApp(ThemedWidgets):
         )
         style.map(
             "Corpus.Treeview",
-            background=[("selected", COLORS["treeselect"])],
-            foreground=[("selected", COLORS["accent_text"])],
+            background=[("selected", self.colors["treeselect"])],
+            foreground=[("selected", self.colors["accent_text"])],
         )
         style.map(
             "Corpus.Treeview.Heading",
-            background=[("active", COLORS["surface2"])],
+            background=[("active", self.colors["surface2"])],
         )
         style.configure(
-            "Dark.TCombobox",
-            fieldbackground=COLORS["entry_bg"],
-            background=COLORS["surface2"],
-            foreground=COLORS["text_primary"],
-            selectbackground=COLORS["treeselect"],
-            selectforeground=COLORS["accent_text"],
-            bordercolor=COLORS["border"],
-            arrowcolor=COLORS["text_muted"],
+            "Themed.TCombobox",
+            fieldbackground=self.colors["entry_bg"],
+            background=self.colors["surface2"],
+            foreground=self.colors["text_primary"],
+            selectbackground=self.colors["treeselect"],
+            selectforeground=self.colors["accent_text"],
+            bordercolor=self.colors["border"],
+            arrowcolor=self.colors["text_muted"],
             relief="flat",
             padding=(8, 4),
         )
         style.map(
-            "Dark.TCombobox",
-            fieldbackground=[("readonly", COLORS["entry_bg"])],
-            foreground=[("readonly", COLORS["text_primary"])],
-            bordercolor=[("focus", COLORS["accent"])],
+            "Themed.TCombobox",
+            fieldbackground=[("readonly", self.colors["entry_bg"])],
+            foreground=[("readonly", self.colors["text_primary"])],
+            bordercolor=[("focus", self.colors["accent"])],
         )
+        style.configure(
+            "Themed.Vertical.TScrollbar",
+            background=self.colors["surface2"],
+            troughcolor=self.colors["bg"],
+            bordercolor=self.colors["bg"],
+            lightcolor=self.colors["surface2"],
+            darkcolor=self.colors["surface2"],
+            arrowcolor=self.colors["text_muted"],
+            relief="flat",
+            borderwidth=0,
+            arrowsize=12,
+            gripcount=0,
+        )
+        style.map(
+            "Themed.Vertical.TScrollbar",
+            background=[("active", self.colors["btn_hover"]), ("pressed", self.colors["btn_hover"])],
+            arrowcolor=[("active", self.colors["accent_text"])],
+            lightcolor=[("active", self.colors["btn_hover"]), ("pressed", self.colors["btn_hover"])],
+            darkcolor=[("active", self.colors["btn_hover"]), ("pressed", self.colors["btn_hover"])],
+        )
+        style.layout(
+            "Themed.Vertical.TScrollbar",
+            [
+                ("Vertical.Scrollbar.trough", {
+                    "sticky": "ns",
+                    "children": [
+                        ("Vertical.Scrollbar.uparrow", {"side": "top", "sticky": ""}),
+                        ("Vertical.Scrollbar.downarrow", {"side": "bottom", "sticky": ""}),
+                        ("Vertical.Scrollbar.thumb", {"unit": "1", "children": [
+                            ("Vertical.Scrollbar.grip", {"sticky": ""})
+                        ], "sticky": "ns"}),
+                    ],
+                }),
+            ],
+        )
+
+    # ── THEME (full switch) ──────────────────────────────────────────────────
+    def _on_theme_select(self, event=None):
+        self._apply_color_theme(self.theme_var.get())
+
+    def _apply_color_theme(self, name):
+        if name not in THEMES:
+            return
+        self.colors = dict(THEMES[name])
+        self._apply_ttk_style()
+        self.root.configure(bg=self.colors["bg"])
+        for apply_fn in self._theme_registry:
+            apply_fn()
 
     # ── FLAGS ─────────────────────────────────────────────────────────────────
     def toggle_flag(self):
@@ -532,19 +658,19 @@ class CorpusApp(ThemedWidgets):
     # ── BUILD UI ──────────────────────────────────────────────────────────────
     def build_ui(self):
         GAP = 6
-        root_frame = tk.Frame(self.root, bg=COLORS["bg"], padx=12, pady=12)
+        root_frame = self._frame(self.root, "bg", padx=12, pady=12)
         root_frame.pack(fill="both", expand=True)
 
         # LEFT PANEL ──────────────────────────────────────────────────────────
-        left_panel = tk.Frame(root_frame, bg=COLORS["bg"], width=600)
+        left_panel = self._frame(root_frame, "bg", width=600)
         left_panel.pack(side="left", fill="y")
         left_panel.pack_propagate(False)
 
         # Row 1: Search
-        row1 = tk.Frame(left_panel, bg=COLORS["bg"])
+        row1 = self._frame(left_panel, "bg")
         row1.pack(fill="x", pady=(0, GAP))
 
-        self._label_on(row1, COLORS["bg"], "Search", muted=True).pack(side="left", padx=(0, 4))
+        self._label_on(row1, "bg", "Search", muted=True).pack(side="left", padx=(0, 4))
 
         field_cb = self._combobox(
             row1,
@@ -560,10 +686,10 @@ class CorpusApp(ThemedWidgets):
         self.search_entry.bind("<KeyRelease>", self.filter_entries)
 
         # Row 2: Numeric range + PoS
-        row3 = tk.Frame(left_panel, bg=COLORS["bg"])
+        row3 = self._frame(left_panel, "bg")
         row3.pack(fill="x", pady=(0, GAP))
 
-        self._label_on(row3, COLORS["bg"], "Filter", muted=True).pack(side="left", padx=(0, 4))
+        self._label_on(row3, "bg", "Filter", muted=True).pack(side="left", padx=(0, 4))
 
         range_cb = self._combobox(
             row3,
@@ -574,17 +700,17 @@ class CorpusApp(ThemedWidgets):
         range_cb.pack(side="left", padx=(0, 6))
         range_cb.bind("<<ComboboxSelected>>", self.filter_entries)
 
-        self._label_on(row3, COLORS["bg"], "Min", muted=True).pack(side="left", padx=(0, 4))
+        self._label_on(row3, "bg", "Min", muted=True).pack(side="left", padx=(0, 4))
         self.filter_min = self._entry(row3, textvariable=self.range_min_var, width=15)
         self.filter_min.pack(side="left", padx=(0, 8))
         self.filter_min.bind("<KeyRelease>", self.filter_entries)
 
-        self._label_on(row3, COLORS["bg"], "Max", muted=True).pack(side="left", padx=(0, 4))
+        self._label_on(row3, "bg", "Max", muted=True).pack(side="left", padx=(0, 4))
         self.filter_max = self._entry(row3, textvariable=self.range_max_var, width=15)
         self.filter_max.pack(side="left")
         self.filter_max.bind("<KeyRelease>", self.filter_entries)
 
-        self._label_on(row3, COLORS["bg"], "PoS", muted=True).pack(side="left", padx=(16, 4))
+        self._label_on(row3, "bg", "PoS", muted=True).pack(side="left", padx=(16, 4))
         self.pos_cb = self._combobox(
             row3,
             ["All"] + list(POS_MAP.values()),
@@ -595,80 +721,90 @@ class CorpusApp(ThemedWidgets):
         self.pos_cb.bind("<<ComboboxSelected>>", self.filter_entries)
 
         # Row 3: Flag mode / Def mode
-        row5 = tk.Frame(left_panel, bg=COLORS["bg"])
+        row5 = self._frame(left_panel, "bg")
         row5.pack(fill="x", pady=(0, GAP))
 
-        self._label_on(row5, COLORS["bg"], "Flags", muted=True).pack(side="left", padx=(0, 4))
+        self._label_on(row5, "bg", "Flags", muted=True).pack(side="left", padx=(0, 4))
+
+        # Theme selector — sits on the right of the Flags row.
+        self.theme_cb = self._combobox(
+            row5,
+            list(THEMES.keys()),
+            textvariable=self.theme_var,
+            width=8,
+        )
+        self.theme_cb.pack(side="right")
+        self.theme_cb.bind("<<ComboboxSelected>>", self._on_theme_select)
+        self._label_on(row5, "bg", "Theme", muted=True).pack(side="right", padx=(0, 4))
 
         for value, label in [
             (FlagMode.ALL,       "All"),
             (FlagMode.FLAGGED,   "Flagged"),
             (FlagMode.UNFLAGGED, "Unflagged"),
         ]:
-            tk.Radiobutton(
+            rb = tk.Radiobutton(
                 row5,
                 text=label,
                 variable=self.flag_mode,
                 value=value,
                 command=self.filter_entries,
-                bg=COLORS["bg"],
-                fg=COLORS["text_muted"],
-                activebackground=COLORS["bg"],
-                activeforeground=COLORS["accent_text"],
-                selectcolor=COLORS["surface2"],
                 highlightthickness=0,
                 bd=0,
                 font=FONT_BODY_S,
                 cursor="hand2",
-            ).pack(side="left", padx=(0, 10))
+            )
+            self._register_theme(lambda rb=rb: rb.configure(
+                bg=self.colors["bg"], fg=self.colors["text_muted"],
+                activebackground=self.colors["bg"], activeforeground=self.colors["accent_text"],
+                selectcolor=self.colors["surface2"],
+            ))
+            rb.pack(side="left", padx=(0, 10))
 
-        row6 = tk.Frame(left_panel, bg=COLORS["bg"])
+        row6 = self._frame(left_panel, "bg")
         row6.pack(fill="x", pady=(0, GAP))
 
-        self._label_on(row6, COLORS["bg"], "Definitions", muted=True).pack(side="left", padx=(0, 4))
+        self._label_on(row6, "bg", "Definitions", muted=True).pack(side="left", padx=(0, 4))
 
         for value, label in [
             (DefMode.ALL, "All"),
             (DefMode.DEFINED, "Defined"),
             (DefMode.UNDEFINED, "Undefined"),
         ]:
-            tk.Radiobutton(
+            rb = tk.Radiobutton(
                 row6,
                 text=label,
                 variable=self.def_mode,
                 value=value,
                 command=self.filter_entries,
-                bg=COLORS["bg"],
-                fg=COLORS["text_muted"],
-                activebackground=COLORS["bg"],
-                activeforeground=COLORS["accent_text"],
-                selectcolor=COLORS["surface2"],
                 highlightthickness=0,
                 bd=0,
                 font=FONT_BODY_S,
                 cursor="hand2",
-            ).pack(side="left", padx=(0, 10))
+            )
+            self._register_theme(lambda rb=rb: rb.configure(
+                bg=self.colors["bg"], fg=self.colors["text_muted"],
+                activebackground=self.colors["bg"], activeforeground=self.colors["accent_text"],
+                selectcolor=self.colors["surface2"],
+            ))
+            rb.pack(side="left", padx=(0, 10))
 
         # Row 4: Status + Reset
-        row7 = tk.Frame(left_panel, bg=COLORS["bg"])
+        row7 = self._frame(left_panel, "bg")
         row7.pack(fill="x", pady=(0, GAP))
 
         self._button(row7, "Reset filters", self._reset_filters).pack(side="left")
 
-        self.status_label = tk.Label(
-            row7,
-            text="Loading…",
-            bg=COLORS["bg"],
-            fg=COLORS["text_hint"],
-            font=FONT_STATUS,
-        )
+        self.status_label = tk.Label(row7, text="Loading…", font=FONT_STATUS)
+        self._register_theme(lambda: self.status_label.configure(
+            bg=self.colors["bg"], fg=self.colors["text_hint"]
+        ))
         self.status_label.pack(side="right")
 
         # Treeview
-        tree_outer = tk.Frame(left_panel, bg=COLORS["border"], bd=1, relief="flat")
+        tree_outer = self._frame(left_panel, "border", bd=1, relief="flat")
         tree_outer.pack(fill="both", expand=True)
 
-        tree_frame = tk.Frame(tree_outer, bg=COLORS["surface"])
+        tree_frame = self._frame(tree_outer, "surface")
         tree_frame.pack(fill="both", expand=True, padx=1, pady=1)
 
         columns = ("Rank", "Lemma", "PoS", "Freq", "Disp")
@@ -688,12 +824,13 @@ class CorpusApp(ThemedWidgets):
         self.tree.column("Freq",  width=90,  anchor="e",      minwidth=60)
         self.tree.column("Disp",  width=80,  anchor="center", minwidth=50)
 
-        y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview,
+                                  style="Themed.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=y_scroll.set)
 
-        self.tree.tag_configure(
-            "no_def", foreground=COLORS["no_def_text"]
-        )
+        self._register_theme(lambda: self.tree.tag_configure(
+            "no_def", foreground=self.colors["no_def_text"]
+        ))
 
         self.tree.grid(row=0, column=0, sticky="nsew")
         y_scroll.grid(row=0, column=1, sticky="ns")
@@ -704,12 +841,10 @@ class CorpusApp(ThemedWidgets):
         self.tree.bind("<<TreeviewSelect>>", self.on_select_word)
 
         # Divider
-        tk.Frame(root_frame, bg=COLORS["border"], width=1).pack(
-            side="left", fill="y", padx=(10, 0)
-        )
+        self._frame(root_frame, "border", width=1).pack(side="left", fill="y", padx=(10, 0))
 
         # RIGHT PANEL ─────────────────────────────────────────────────────────
-        right_panel = tk.Frame(root_frame, bg=COLORS["bg"], padx=16, pady=4)
+        right_panel = self._frame(root_frame, "bg", padx=16, pady=4)
         right_panel.pack(side="right", fill="both", expand=True)
 
         # Configure grid: definition gets weight, translation is fixed
@@ -717,26 +852,25 @@ class CorpusApp(ThemedWidgets):
         right_panel.grid_rowconfigure(8, weight=3)  # translation box
         right_panel.grid_columnconfigure(0, weight=1)
 
-        title_frame = tk.Frame(right_panel, bg=COLORS["bg"])
+        title_frame = self._frame(right_panel, "bg")
         title_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-        self.word_title = tk.Label(
-            title_frame, text="Select a word", font=FONT_TITLE,
-            bg=COLORS["bg"], fg=COLORS["text_primary"],
-        )
+        self.word_title = tk.Label(title_frame, text="Select a word", font=FONT_TITLE)
+        self._register_theme(lambda: self.word_title.configure(
+            bg=self.colors["bg"], fg=self.colors["text_primary"]
+        ))
         self.word_title.pack(side="left")
 
-        self.phonetic_label = tk.Label(
-            title_frame, text="", font=("Segoe UI", 13),
-            bg=COLORS["bg"], fg=COLORS["accent_text"],
-        )
+        self.phonetic_label = tk.Label(title_frame, text="", font=("Segoe UI", 13))
+        self._register_theme(lambda: self.phonetic_label.configure(
+            bg=self.colors["bg"], fg=self.colors["accent_text"]
+        ))
         self.phonetic_label.pack(side="left", padx=(14, 0))
 
-        self.google_link = tk.Label(
-            title_frame, text="[↗]", font=FONT_BODY_S,
-            bg=COLORS["bg"], fg=COLORS["accent_text"],
-            cursor="hand2",
-        )
+        self.google_link = tk.Label(title_frame, text="[↗]", font=FONT_BODY_S, cursor="hand2")
+        self._register_theme(lambda: self.google_link.configure(
+            bg=self.colors["bg"], fg=self.colors["accent_text"]
+        ))
         self.google_link.pack(side="left", padx=(10, 0))
         self.google_link.bind("<Button-1>", self._open_google)
         self.google_link.bind(
@@ -749,17 +883,19 @@ class CorpusApp(ThemedWidgets):
 
         self.speak_button = tk.Button(
             title_frame, text="🔊", command=self.speak_word,
-            bg=COLORS["btn_bg"], fg=COLORS["text_primary"],
-            activebackground=COLORS["btn_hover"], activeforeground=COLORS["text_primary"],
             relief="flat", bd=0, highlightthickness=0, cursor="hand2",
             font=("Segoe UI", 13), padx=8, pady=3,
         )
+        self._register_theme(lambda: self.speak_button.configure(
+            bg=self.colors["btn_bg"], fg=self.colors["text_primary"],
+            activebackground=self.colors["btn_hover"], activeforeground=self.colors["text_primary"],
+        ))
         self.speak_button.pack(side="left", padx=(10, 0))
 
-        self.meta_label = tk.Label(
-            right_panel, text="", font=FONT_META,
-            bg=COLORS["bg"], fg=COLORS["text_muted"], justify="left",
-        )
+        self.meta_label = tk.Label(right_panel, text="", font=FONT_META, justify="left")
+        self._register_theme(lambda: self.meta_label.configure(
+            bg=self.colors["bg"], fg=self.colors["text_muted"]
+        ))
         self.meta_label.grid(row=1, column=0, sticky="w", pady=(0, 10))
 
         self.flag_button = self._button(
@@ -767,12 +903,12 @@ class CorpusApp(ThemedWidgets):
         )
         self.flag_button.grid(row=2, column=0, sticky="w", pady=(0, 12))
 
-        tk.Frame(right_panel, bg=COLORS["border"], height=1).grid(
+        self._frame(right_panel, "border", height=1).grid(
             row=3, column=0, sticky="ew", pady=(0, 12)
         )
 
         # Definition box
-        definition_frame = tk.Frame(right_panel, bg=COLORS["border"], bd=1, relief="flat")
+        definition_frame = self._frame(right_panel, "border", bd=1, relief="flat")
         definition_frame.grid(row=6, column=0, sticky="nsew")
         definition_frame.grid_rowconfigure(0, weight=1)
         definition_frame.grid_columnconfigure(0, weight=1)
@@ -781,11 +917,6 @@ class CorpusApp(ThemedWidgets):
             definition_frame,
             wrap="word",
             font=FONT_DEF,
-            bg=COLORS["surface"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["accent"],
-            selectbackground=COLORS["treeselect"],
-            selectforeground=COLORS["accent_text"],
             bd=0,
             highlightthickness=0,
             spacing2=4, spacing3=2,
@@ -796,49 +927,58 @@ class CorpusApp(ThemedWidgets):
         )
         self.definition_box.grid(row=0, column=0, sticky="nsew")
 
-        self.definition_box.tag_configure(
-            "pos_header",
-            font=("Segoe UI", 12, "bold"), foreground="#7ab0cc",
-            spacing1=10, spacing3=4,
-        )
-        self.definition_box.tag_configure(
-            "def_num", font=("Segoe UI", 11), foreground=COLORS["text_hint"]
-        )
-        self.definition_box.tag_configure(
-            "def_text", font=("Segoe UI", 13), foreground=COLORS["text_primary"]
-        )
-        self.definition_box.tag_configure(
-            "example",
-            font=("Segoe UI", 11, "italic"), foreground=COLORS["text_muted"],
-            lmargin1=20, lmargin2=20, spacing1=2,
-        )
-        self.definition_box.tag_configure(
-            "syn_label", font=("Segoe UI", 10, "bold"), foreground="#6896ae"
-        )
-        self.definition_box.tag_configure(
-            "syn_val", font=("Segoe UI", 10), foreground="#6896ae"
-        )
-        self.definition_box.tag_configure(
-            "error", font=("Segoe UI", 11), foreground=COLORS["danger"]
-        )
-        self.definition_box.tag_configure(
-            "loading", font=("Segoe UI", 11), foreground=COLORS["text_hint"]
-        )
+        def _theme_definition_box():
+            self.definition_box.configure(
+                bg=self.colors["surface"], fg=self.colors["text_primary"],
+                insertbackground=self.colors["accent"],
+                selectbackground=self.colors["treeselect"],
+                selectforeground=self.colors["accent_text"],
+            )
+            self.definition_box.tag_configure(
+                "pos_header", font=("Segoe UI", 12, "bold"), foreground=self.colors["pos_header"],
+                spacing1=10, spacing3=4,
+            )
+            self.definition_box.tag_configure(
+                "def_num", font=("Segoe UI", 11), foreground=self.colors["text_hint"]
+            )
+            self.definition_box.tag_configure(
+                "def_text", font=("Segoe UI", 13), foreground=self.colors["text_primary"]
+            )
+            self.definition_box.tag_configure(
+                "example",
+                font=("Segoe UI", 11, "italic"), foreground=self.colors["text_muted"],
+                lmargin1=20, lmargin2=20, spacing1=2,
+            )
+            self.definition_box.tag_configure(
+                "syn_label", font=("Segoe UI", 10, "bold"), foreground=self.colors["tag_text"]
+            )
+            self.definition_box.tag_configure(
+                "syn_val", font=("Segoe UI", 10), foreground=self.colors["tag_text"]
+            )
+            self.definition_box.tag_configure(
+                "error", font=("Segoe UI", 11), foreground=self.colors["danger"]
+            )
+            self.definition_box.tag_configure(
+                "loading", font=("Segoe UI", 11), foreground=self.colors["text_hint"]
+            )
+        self._register_theme(_theme_definition_box)
 
         definition_scrollbar = ttk.Scrollbar(
-            definition_frame, orient="vertical", command=self.definition_box.yview
+            definition_frame, orient="vertical", command=self.definition_box.yview,
+            style="Themed.Vertical.TScrollbar",
         )
         self.definition_box.configure(yscrollcommand=definition_scrollbar.set)
         definition_scrollbar.grid(row=0, column=1, sticky="ns")
 
         # ── TRANSLATION ───────────────────────────────────────────────────────
-        trans_header = tk.Frame(right_panel, bg=COLORS["bg"])
+        trans_header = self._frame(right_panel, "bg")
         trans_header.grid(row=7, column=0, sticky="ew", pady=(10, 4))
 
-        tk.Label(
-            trans_header, text="Translation", font=("Segoe UI Semibold", 10),
-            bg=COLORS["bg"], fg=COLORS["text_muted"],
-        ).pack(side="left", padx=(0, 10))
+        trans_label = tk.Label(trans_header, text="Translation", font=("Segoe UI Semibold", 10))
+        self._register_theme(lambda: trans_label.configure(
+            bg=self.colors["bg"], fg=self.colors["text_muted"]
+        ))
+        trans_label.pack(side="left", padx=(0, 10))
 
         self.lang_var = tk.StringVar(value="Select language")
         lang_cb = ttk.Combobox(
@@ -847,17 +987,17 @@ class CorpusApp(ThemedWidgets):
             textvariable=self.lang_var,
             state="readonly",
             width=22,
-            style="Dark.TCombobox",
+            style="Themed.TCombobox",
         )
         lang_cb.pack(side="left")
         lang_cb.bind("<<ComboboxSelected>>", self._on_language_select)
 
-        trans_outer = tk.Frame(right_panel, bg=COLORS["border"], bd=1, relief="flat")
+        trans_outer = self._frame(right_panel, "border", bd=1, relief="flat")
         trans_outer.grid(row=8, column=0, sticky="nsew", pady=(0, 4))
         trans_outer.grid_rowconfigure(0, weight=1)
         trans_outer.grid_columnconfigure(0, weight=1)
 
-        trans_inner = tk.Frame(trans_outer, bg=COLORS["surface"])
+        trans_inner = self._frame(trans_outer, "surface")
         trans_inner.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
         trans_inner.grid_rowconfigure(0, weight=1)
         trans_inner.grid_columnconfigure(0, weight=1)
@@ -866,11 +1006,6 @@ class CorpusApp(ThemedWidgets):
             trans_inner,
             wrap="word",
             font=("Segoe UI", 11),
-            bg=COLORS["surface"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["accent"],
-            selectbackground=COLORS["treeselect"],
-            selectforeground=COLORS["accent_text"],
             relief="flat", bd=0,
             highlightthickness=0,
             padx=12, pady=8,
@@ -879,40 +1014,48 @@ class CorpusApp(ThemedWidgets):
         )
         self.translation_box.grid(row=0, column=0, sticky="nsew")
 
-        self.translation_box.tag_configure(
-            "trans_text", font=("Segoe UI", 11), foreground=COLORS["text_primary"]
-        )
-        self.translation_box.tag_configure(
-            "loading", font=("Segoe UI", 11), foreground=COLORS["text_hint"]
-        )
-        self.translation_box.tag_configure(
-            "error", font=("Segoe UI", 11), foreground=COLORS["danger"]
-        )
-        self.translation_box.tag_configure(
-            "pos_header",
-            font=("Segoe UI", 12, "bold"), foreground="#7ab0cc",
-            spacing1=10, spacing3=4,
-        )
-        self.translation_box.tag_configure(
-            "def_num", font=("Segoe UI", 11), foreground=COLORS["text_hint"]
-        )
-        self.translation_box.tag_configure(
-            "def_text", font=("Segoe UI", 13), foreground=COLORS["text_primary"]
-        )
-        self.translation_box.tag_configure(
-            "example",
-            font=("Segoe UI", 11, "italic"), foreground=COLORS["text_muted"],
-            lmargin1=20, lmargin2=20, spacing1=2,
-        )
-        self.translation_box.tag_configure(
-            "syn_label", font=("Segoe UI", 10, "bold"), foreground="#6896ae"
-        )
-        self.translation_box.tag_configure(
-            "syn_val", font=("Segoe UI", 10), foreground="#6896ae"
-        )
+        def _theme_translation_box():
+            self.translation_box.configure(
+                bg=self.colors["surface"], fg=self.colors["text_primary"],
+                insertbackground=self.colors["accent"],
+                selectbackground=self.colors["treeselect"],
+                selectforeground=self.colors["accent_text"],
+            )
+            self.translation_box.tag_configure(
+                "trans_text", font=("Segoe UI", 11), foreground=self.colors["text_primary"]
+            )
+            self.translation_box.tag_configure(
+                "loading", font=("Segoe UI", 11), foreground=self.colors["text_hint"]
+            )
+            self.translation_box.tag_configure(
+                "error", font=("Segoe UI", 11), foreground=self.colors["danger"]
+            )
+            self.translation_box.tag_configure(
+                "pos_header", font=("Segoe UI", 12, "bold"), foreground=self.colors["pos_header"],
+                spacing1=10, spacing3=4,
+            )
+            self.translation_box.tag_configure(
+                "def_num", font=("Segoe UI", 11), foreground=self.colors["text_hint"]
+            )
+            self.translation_box.tag_configure(
+                "def_text", font=("Segoe UI", 13), foreground=self.colors["text_primary"]
+            )
+            self.translation_box.tag_configure(
+                "example",
+                font=("Segoe UI", 11, "italic"), foreground=self.colors["text_muted"],
+                lmargin1=20, lmargin2=20, spacing1=2,
+            )
+            self.translation_box.tag_configure(
+                "syn_label", font=("Segoe UI", 10, "bold"), foreground=self.colors["tag_text"]
+            )
+            self.translation_box.tag_configure(
+                "syn_val", font=("Segoe UI", 10), foreground=self.colors["tag_text"]
+            )
+        self._register_theme(_theme_translation_box)
 
         trans_scroll = ttk.Scrollbar(
-            trans_inner, orient="vertical", command=self.translation_box.yview
+            trans_inner, orient="vertical", command=self.translation_box.yview,
+            style="Themed.Vertical.TScrollbar",
         )
         self.translation_box.configure(yscrollcommand=trans_scroll.set)
         trans_scroll.grid(row=0, column=1, sticky="ns")
